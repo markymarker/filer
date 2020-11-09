@@ -1,16 +1,13 @@
 // 2020-11-04
 
+#define INCLUDING_SM
+
+#include "macros.h"
+#include "state_machine.c"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#define DEBUG 1
-
-#if DEBUG
-#define DEBUGPRINT(t) printf("DEBUG: %s\n", t);
-#else
-#define DEBUGPRINT(t) 
-#endif
 
 #define GENERIC_BUF_SIZE 256
 #define FB_MAX_BUF_SIZE 20480 // 20 KiB
@@ -140,7 +137,7 @@ int close_fileblock(fileblock * fb){
   if(fb == NULL) return 1;
 
   if(fb->fhandle != NULL){
-    DEBUGPRINT("Cleaning up opened file");
+    DEBUGPRINT("Cleaning up opened file")
     if(fclose(fb->fhandle) != 0){
       fprintf(stderr, "Error closing already opened file\n");
       return  2;
@@ -150,13 +147,13 @@ int close_fileblock(fileblock * fb){
 
   if(fb->labels != NULL) free(fb->labels);
   else if(fb->label_count){
-    DEBUGPRINT("No label pointer to clean up");
+    DEBUGPRINT("No label pointer to clean up")
   }
   fb->labels = NULL;
 
   if(fb->label_texts != NULL) free(fb->label_texts);
   else if(fb->label_count){
-    DEBUGPRINT("No label text pointer to clean up");
+    DEBUGPRINT("No label text pointer to clean up")
   }
   fb->label_texts = NULL;
 

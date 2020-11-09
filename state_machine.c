@@ -5,6 +5,8 @@
  * 5 equals signs (=). The preceeding line is not a part of the label.
  */
 
+#include "macros.h"
+
 #include <stdio.h>
 
 typedef int (* generic_func)(char);
@@ -24,6 +26,7 @@ sm_func
 ;
 
 
+#ifndef INCLUDING_SM
 int main(int argl, char ** argv){
   char str[] = "abcdefg\n======abc==\nlabel a:\nhijklmnop\n=====\nANOTHER_LABEL:\nqq";
   printf("Running state machine on the following:\n%s\n\n", str);
@@ -58,28 +61,10 @@ int main(int argl, char ** argv){
     }
   }
 
-  /*
-  for(int lbuf = 0; lbuf < 3; ++lbuf){
-    if(*c == '\0') break;
-
-    sm_func state = (sm_func)entry;
-    int llen = 0;
-
-    while(state != NULL && *c != '\0'){
-      if(state == (sm_func)label_line && llen < 20)
-        if(*c != ':' && *c != '\n')
-          lbufs[lbuf][llen++] = *c;
-      state = (sm_func)state(*c);
-      ++c;
-    }
-
-    lbufs[lbuf][llen] = '\0';
-  }
-  */
-
   printf("Finished\n");
   printf("Found labels:\n  1: %s\n  2: %s\n  3: %s\n", lbuf1, lbuf2, lbuf3);
 }
+#endif
 
 
 /* Run a single iteration of the state machine.
@@ -124,7 +109,7 @@ int run_iteration(sm_func * f, char c, char * lstore){
  * Looking for an equals sign, failure ignores the line
  */
 sm_func entry(char c){
-  printf("In entry state: %c\n", c);
+  DEBUGPRINTC_V("In entry state", c)
 
   switch(c){
   case '=': return (sm_func)equals1;
@@ -137,7 +122,7 @@ sm_func entry(char c){
  * Looking for newline
  */
 sm_func ignore_line(char c){
-  printf("In ignore line state: %c\n", c);
+  DEBUGPRINTC_V("In ignore line state", c)
 
   switch(c){
   case '\n': return (sm_func)entry;
@@ -150,7 +135,7 @@ sm_func ignore_line(char c){
  * Looking for newline
  */
 sm_func delim_matched_finish_line(char c){
-  printf("In delim matched state: %c\n", c);
+  DEBUGPRINTC_V("In delim matched state", c)
 
   switch(c){
   case '\n': return (sm_func)label_line;
@@ -163,7 +148,7 @@ sm_func delim_matched_finish_line(char c){
  * Looking for newline
  */
 sm_func label_line(char c){
-  printf("In label line state: %c\n", c);
+  DEBUGPRINTC_V("In label line state", c)
 
   switch(c){
   //case '\n': return (sm_func)entry;
@@ -178,7 +163,7 @@ sm_func label_line(char c){
  * Looking for an equals sign, failure ignores the line
  */
 sm_func equals1(char c){
-  printf("In equals 1: %c\n", c);
+  DEBUGPRINTC_V("In equals 1", c)
 
   switch(c){
   case '=': return (sm_func)equals2;
@@ -192,7 +177,7 @@ sm_func equals1(char c){
  * Looking for an equals sign, failure ignores the line
  */
 sm_func equals2(char c){
-  printf("In equals 2: %c\n", c);
+  DEBUGPRINTC_V("In equals 2", c)
 
   switch(c){
   case '=': return (sm_func)equals3;
@@ -206,7 +191,7 @@ sm_func equals2(char c){
  * Looking for an equals sign, failure ignores the line
  */
 sm_func equals3(char c){
-  printf("In equals 3: %c\n", c);
+  DEBUGPRINTC_V("In equals 3", c)
 
   switch(c){
   case '=': return (sm_func)equals4;
@@ -220,7 +205,7 @@ sm_func equals3(char c){
  * Looking for an equals sign, failure ignores the line
  */
 sm_func equals4(char c){
-  printf("In equals 4: %c\n", c);
+  DEBUGPRINTC_V("In equals 4", c)
 
   switch(c){
   case '=': return (sm_func)delim_matched_finish_line;
