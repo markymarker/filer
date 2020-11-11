@@ -13,15 +13,23 @@
 #define FB_MAX_BUF_SIZE 20480 // 20 KiB
 #define LABEL_MAX_SIZE 64
 
+#define LABELTRACK_SLOTS 64
+
 #define FB_INITIALIZED 0x01
 #define FB_LOADED_LABELS 0x04
 
 const static char filespath[] = "./dfiles/";
 
 
+typedef struct labeltracknode_s {
+  struct labeltracknode_s * next;
+  long int                  positions[LABELTRACK_SLOTS];
+  char                      label_texts[LABELTRACK_SLOTS * (LABEL_MAX_SIZE + 1)];
+} labeltracknode;
+
 typedef struct {
-  long int fpos; // Position of label in file
-  char   * text; // Pointer into fb.label_texts for text of label
+  long int   fpos; // Position of label in file
+  char     * text; // Pointer into fb.label_texts for text of label
 } label;
 
 typedef struct {
@@ -227,13 +235,121 @@ int load_fileblock_file_maybe(fileblock * fb){
 }
 
 
+/* Reads the labels from the given fileblock's file and adds label information
+ * into to the labeltrack list, adding on new nodes as needed. This function
+ * does not perform any cleanup of labeltrack nodes, even on error.
+ *
+ * This function uses the buf in the fileblock if available.
+ *
+ * Returns the number of labels found on success, or a negative number on error.
+ */
+int fill_labeltrackers(fileblock * fb, labeltracknode * root){
+  if(fb == NULL) return -1;
+  if(root == NULL) return -1;
+  if(!(fb->operations | FB_INITIALIZED)) return -2;
+  // This function doesn't care if labels were already loaded,
+  // as it does not modify the fileblock
+
+  FILE * f = fb->fhandle;
+  char * buf;
+  char using_fb_buf;
+  long int bufsize = 0;
+  unsigned int lcount = 0;
+  sm_func smf = NULL;
+
+  // Use fb buf if available, otherwise allocate buffer
+  if(fb->buf == NULL){
+    using_fb_buf = 0;
+    bufsize = 4096;
+    buf = malloc(bufsize * sizeof(char));
+  } else {
+    using_fb_buf = 1;
+    bufsize = fb->fsize;
+    buf = fb->buf;
+  }
+
+  if(buf == NULL){
+    fprintf(stderr, "Error allocating buffer to load labels\n");
+    return -3;
+  }
+
+  int lt_slot = 0;
+  int lt_text_pos = 0;
+  int lt_blocks = 1;
+  labeltracknode * lt_current = root;
+
+  // Outer loop is for reading chunks of file
+  // Inner loop is for moving through read buffer
+  if(!using_fb_buf) rewind(f);
+  while(1){
+    size_t read;
+
+    // Fill buffer as needed, set size of data
+    if(!using_fb_buf){
+      if(feof(f)) break;
+      read = fread(buf, sizeof(char), bufsize, f);
+      if(ferror(f)){
+        perror("Error reading file to get label count");
+        return 4;
+      }
+    } else {
+      read = fb->fsize;
+    }
+
+    // Run state machine on the current chunk of data
+    for(long int pos = 0; pos < read; ++pos){
+      char * lstore = (lt_text_pos > LABEL_MAX_SIZE)
+        ? NULL
+        : lt_current->label_texts + (LABEL_MAX_SIZE * lt_slot) + lt_text_pos
+      ;
+
+      int rval = run_iteration(&smf, buf[pos], lstore);
+
+      if(rval == 0){
+        // Finished with a label
+        lt_current->label_texts[LABEL_MAX_SIZE * lt_slot + lt_text_pos] = '\0';
+        lt_text_pos = 0;
+
+        // Increment slot and allocate a new node if all slots used up
+        if(++lt_slot % LABELTRACK_SLOTS == 0){
+          lt_current->next = (labeltracknode *)malloc(sizeof(labeltracknode));
+          lt_current = lt_current->next;
+          ++lt_blocks;
+        }
+      } else if(rval == 2){
+        // Track transition into label
+        long int cl_pos;
+        if(using_fb_buf) cl_pos = pos;
+        else cl_pos = (ftell(f) - read) + pos;
+
+        lt_current->positions[lt_slot] = cl_pos;
+        ++lcount;
+      } else if(rval == 3){
+        ++lt_text_pos;
+      }
+    }
+
+    // If using fb buf, all of file done in one go
+    if(using_fb_buf) break;
+  }
+
+  DEBUGPRINTD("Found labels", lcount);
+  DEBUGPRINTD("Used labeltrack blocks", lt_blocks);
+
+  // Free buffer if we allocated our own
+  if(!using_fb_buf) free(buf);
+
+  return lcount;
+}
+
+
 /* Reads the labels from the configured file in the provided initialized
  * fileblock and stores them properly into said fileblock.
  *
  * This function uses the buf in the fileblock if available.
  */
 int load_fileblock_labels(fileblock * fb){
-  fprintf(stderr, "load labels under construction\n"); return -1;
+  //fprintf(stderr, "load labels under construction\n"); return -1;
   if(fb == NULL) return 1;
   if(!(fb->operations | FB_INITIALIZED)) return 2;
   if(fb->operations & FB_LOADED_LABELS) return 3;
@@ -262,7 +378,7 @@ int load_fileblock_labels(fileblock * fb){
   }
 
   // Linked list of position blocks for tracking all label positions
-  int lt_pos_size = 128;
+#define lt_pos_size 128
   struct labeltrack {
     struct labeltrack * next;
     long int positions[lt_pos_size];
@@ -271,7 +387,7 @@ int load_fileblock_labels(fileblock * fb){
   // First pass: Figure out how many labels are present
   // TODO: Track some (or all w/e.g. linked list) of label positions in file
 
-  struct labeltrack root;
+  struct labeltrack root = { .next = NULL };
   struct labeltrack * lt_current = &root;
   int lt_blocks = 1;
   int lt_pos = 0;
@@ -327,6 +443,7 @@ int load_fileblock_labels(fileblock * fb){
     for(int p = 0; p < lt_pos_size; ++p)
       fprintf(stderr, "Block %2d,%3d : %ld\n", bc, p, lt_current->positions[p]);
     ++bc;
+    lt_current = lt_current->next;
   }
   // ::TEST PRINT
 
@@ -343,37 +460,9 @@ int load_fileblock_labels(fileblock * fb){
     return 5;
   }
 
-  // Second pass: Store label information
-  // TODO: Use the labeltrack chain
+  // Second pass: Store label information in condensed format
 
-  unsigned int lcurrent = 0;
-  if(!using_fb_buf) rewind(f);
-  while(1){
-    size_t read;
-
-    // Fill buffer as needed, set size of data
-    if(!using_fb_buf){
-      if(feof(f)) break;
-      read = fread(buf, sizeof(char), bufsize, f);
-      if(ferror(f)){
-        perror("Error reading file to get label count");
-        return 4;
-      }
-    } else {
-      read = fb->fsize;
-    }
-
-    // Run state machine on the current chunk of data
-    for(long int pos = 0; pos < read; ++pos){
-      int rval = run_iteration(&smf, buf[pos], NULL);
-
-      // State machine ends after label
-      if(rval == 0) ++lcount;
-    }
-
-    // If using fb buf, all of file done in one go
-    if(using_fb_buf) break;
-  }
+  //
 
   // TODO: Free labeltrack chain
 
