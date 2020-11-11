@@ -50,7 +50,7 @@ int main(int argl, char ** argv){
       rval = run_iteration(&smf, *c, ls);
       ++c;
       if(rval <= 0) break;
-      if(rval == 2) ++llen;
+      if(rval == 3) ++llen;
     }
 
     lbufs[lbuf][llen] = '\0';
@@ -81,22 +81,34 @@ int main(int argl, char ** argv){
  *   0: Finished
  *  >0: Still running:
  *      1: Normal continuing
- *      2: Label character stored
+ *      2: State change entered label
+ *      3: Label character stored
  */
 int run_iteration(sm_func * f, char c, char * lstore){
   if(*f == NULL) *f = (sm_func)entry;
   int rval = 1;
 
+  sm_func * prev_state = f;
+
   *f = (sm_func)(*f)(c);
-  if(*f == (sm_func)label_line && lstore != NULL){
+
+  if(*prev_state != (sm_func)label_line
+  && *f == (sm_func)label_line
+  ){
+    // Transitioned from non label line into label line
+    rval = 2;
+  } else if(*f == (sm_func)label_line && lstore != NULL){
+    // Potentially going to store a character into lstore
     if( c == ' ' || c == '_' || c == '-'
     || (c >= 'a' && c <= 'z')
     || (c >= 'A' && c <= 'Z')
     ){
+      // Storing a valid character into lstore
       *lstore = c;
-      rval = 2;
+      rval = 3;
     }
   } else if(*f == NULL){
+    // Finished operation
     rval = 0;
   }
 
