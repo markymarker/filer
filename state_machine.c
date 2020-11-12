@@ -88,11 +88,11 @@ int run_iteration(sm_func * f, char c, char * lstore){
   if(*f == NULL) *f = (sm_func)entry;
   int rval = 1;
 
-  sm_func * prev_state = f;
+  sm_func prev_state = *f;
 
   *f = (sm_func)(*f)(c);
 
-  if(*prev_state != (sm_func)label_line
+  if(prev_state != (sm_func)label_line
   && *f == (sm_func)label_line
   ){
     // Transitioned from non label line into label line
@@ -100,6 +100,7 @@ int run_iteration(sm_func * f, char c, char * lstore){
   } else if(*f == (sm_func)label_line && lstore != NULL){
     // Potentially going to store a character into lstore
     if( c == ' ' || c == '_' || c == '-'
+    || (c >= '0' && c <= '9')
     || (c >= 'a' && c <= 'z')
     || (c >= 'A' && c <= 'Z')
     ){
