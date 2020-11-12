@@ -310,6 +310,8 @@ int fill_labeltrackers(fileblock * fb, labeltracknode * root){
         lt_current->label_texts[LABEL_MAX_SIZE * lt_slot + lt_text_pos] = '\0';
         lt_text_pos = 0;
 
+        DEBUGPRINT("Finished label")
+
         // Increment slot and allocate a new node if all slots used up
         if(++lt_slot % LABELTRACK_SLOTS == 0){
           lt_current->next = (labeltracknode *)malloc(sizeof(labeltracknode));
@@ -321,6 +323,8 @@ int fill_labeltrackers(fileblock * fb, labeltracknode * root){
         long int cl_pos;
         if(using_fb_buf) cl_pos = pos;
         else cl_pos = (ftell(f) - read) + pos;
+
+        DEBUGPRINTD("Label transition at", (int)cl_pos)
 
         lt_current->positions[lt_slot] = cl_pos;
         ++lcount;
@@ -358,7 +362,6 @@ int load_fileblock_labels(fileblock * fb){
   char * buf;
   char using_fb_buf;
   long int bufsize = 0;
-  unsigned int lcount = 0;
   sm_func smf = NULL;
 
   // Use fb buf if available, otherwise allocate buffer
@@ -377,75 +380,27 @@ int load_fileblock_labels(fileblock * fb){
     return 5;
   }
 
-  // Linked list of position blocks for tracking all label positions
-#define lt_pos_size 128
-  struct labeltrack {
-    struct labeltrack * next;
-    long int positions[lt_pos_size];
-  };
+  labeltracknode root;
+  int lcount = fill_labeltrackers(fb, &root);
 
-  // First pass: Figure out how many labels are present
-  // TODO: Track some (or all w/e.g. linked list) of label positions in file
-
-  struct labeltrack root = { .next = NULL };
-  struct labeltrack * lt_current = &root;
-  int lt_blocks = 1;
-  int lt_pos = 0;
-
-  if(!using_fb_buf) rewind(f);
-  while(1){
-    size_t read;
-
-    // Fill buffer as needed, set size of data
-    if(!using_fb_buf){
-      if(feof(f)) break;
-      read = fread(buf, sizeof(char), bufsize, f);
-      if(ferror(f)){
-        perror("Error reading file to get label count");
-        return 4;
-      }
-    } else {
-      read = fb->fsize;
-    }
-
-    // Run state machine on the current chunk of data
-    for(long int pos = 0; pos < read; ++pos){
-      int rval = run_iteration(&smf, buf[pos], NULL);
-
-      // Track transition into label
-      if(rval == 2){
-        long int cl_pos;
-        if(using_fb_buf) cl_pos = pos;
-        else cl_pos = ftell(f);
-
-        lt_current->positions[lt_pos] = cl_pos;
-        ++lcount;
-
-        if(++lt_pos % lt_pos_size == 0){
-          lt_current->next = (struct labeltrack *)malloc(sizeof(struct labeltrack));
-          lt_current = lt_current->next;
-          ++lt_blocks;
-        }
-      }
-    }
-
-    // If using fb buf, all of file done in one go
-    if(using_fb_buf) break;
-  }
-
-  DEBUGPRINTD("Found labels", lcount);
-  DEBUGPRINTD("Used labeltrack blocks", lt_blocks);
+  DEBUGPRINTD("Got labels", lcount);
 
   // TEST PRINT::
-  lt_current = &root;
+  labeltracknode * lt_current = &root;
   int bc = 1;
   while(lt_current != NULL){
-    for(int p = 0; p < lt_pos_size; ++p)
-      fprintf(stderr, "Block %2d,%3d : %ld\n", bc, p, lt_current->positions[p]);
+    for(int p = 0; p < LABELTRACK_SLOTS; ++p)
+      fprintf(stderr,
+        "Block %2d,%3d : %ld - %s\n",
+        bc, p,
+        lt_current->positions[p],
+        &lt_current->label_texts[p * (LABEL_MAX_SIZE + 1)]
+      );
     ++bc;
     lt_current = lt_current->next;
   }
   // ::TEST PRINT
+  return 1;
 
   // Allocate appropriately sized stuff
 
