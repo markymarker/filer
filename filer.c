@@ -48,13 +48,19 @@ typedef struct {
 } fileblock;
 
 
-long int get_file_size(FILE *);
-int dump_file_contents(FILE *);
-
 int init_fileblock(fileblock *);
 int close_fileblock(fileblock *);
 int load_fileblock_file_maybe(fileblock *);
 int load_fileblock_labels(fileblock *);
+
+void list_fileblock_labels(fileblock *);
+void show_fileblock_section(fileblock *, unsigned int);
+
+long int get_file_size(FILE *);
+int dump_file_contents(FILE *);
+void test_dump_fileblock(fileblock *);
+
+int get_user_number(int, int, int *);
 
 
 /* The main event.
@@ -62,6 +68,7 @@ int load_fileblock_labels(fileblock *);
 int main(int argl, char ** argv){
 
   const char * fname;
+  int rval;
 
   if(argl > 1){
     fname = argv[1];
@@ -74,29 +81,58 @@ int main(int argl, char ** argv){
     //.no_use_buf = 1,
   };
   fileblock * fb = &fblock;
-  init_fileblock(fb);
 
-  printf("Opened fileblock for: %s\n", fb->fname);
-  printf("Size: %ld\n", fb->fsize);
-
-  printf("Found %u labels:\n", fb->label_count);
-  for(int j = 0; j < fb->label_count; ++j){
-    printf("Label %2d: [%ld] (%u) ", j, fb->labels[j].fpos, fb->labels[j].length);
-    fwrite(fb->labels[j].text, sizeof(char), fb->labels[j].length, stdout);
-    printf("\n");
+  if(rval = init_fileblock(fb)){
+    fprintf(stderr, "Error initializing file (%d)\n", rval);
+    return 2;
   }
 
-  if(fb->buf != NULL){
-    printf("Contents of buffer:\n");
-    fwrite(fb->buf, sizeof(char), fb->fsize, stdout);
+  int input;
+  char running = 1;
+
+  while(running){
+    if(feof(stdin) || ferror(stdin)) return 2;
+
+    printf("\nFile: %s\n", fname);
+    printf("\
+Which action to take?\n\
+  0: Exit\n\
+  1: Test dump\n\
+  2: List labels\n\
+  3: View label contents\n\
+");
+    input = get_user_number(0, 3, NULL);
+    if(input < 0){
+      fprintf(stderr, "Input error\n");
+      return 2;
+    }
+
     printf("\n");
-  } else {
-    printf("Buffer not used\n");
+
+    switch(input){
+    case 0: running = 0; break;
+    case 1: test_dump_fileblock(fb); break;
+    case 2: list_fileblock_labels(fb); break;
+    case 3:
+      if(fb->label_count < 1){
+        printf("No labels found, sorry\n");
+        break;
+      }
+
+      printf("Select label. ");
+
+      input = get_user_number(0, fb->label_count - 1, NULL);
+      if(input < 0){
+        fprintf(stderr, "Input error\n");
+        return 2;
+      }
+
+      show_fileblock_section(fb, (unsigned int)input);
+      break;
+    }
   }
 
   close_fileblock(fb);
-  printf("Closed fileblock for: %s\n", fb->fname);
-
   return 0;
 }
 
@@ -177,6 +213,9 @@ int close_fileblock(fileblock * fb){
   // Labels cleared, so clear action flag
   fb->operations &= ~(FB_LOADED_LABELS);
 
+  if(fb->buf != NULL) free(fb->buf);
+  fb->buf = NULL;
+
   // Not strictly a part of closing the fileblock, but since we're clearing the
   // buffers, we will also set these to keep state consistent
   fb->label_count = 0;
@@ -197,6 +236,11 @@ int load_fileblock_file_maybe(fileblock * fb){
   if(fb->no_use_buf) return 0;
   // File larger than threshold -- not an error condition
   if(fb->fsize > FB_MAX_BUF_SIZE) return 0;
+
+  if(fb->buf != NULL){
+    fprintf(stderr, "Buffer already allocated? Not reallocating.\n");
+    return 1;
+  }
 
   size_t buf_size = fb->fsize * sizeof(char);
 
@@ -396,13 +440,13 @@ int load_fileblock_labels(fileblock * fb){
   if(!(fb->operations | FB_INITIALIZED)) return 2;
   if(fb->operations & FB_LOADED_LABELS) return 3;
 
-  labeltracknode root;
+  labeltracknode root = {0};
   labeltracknode * lt_current;
 
   // Step 1: Get info about labels
 
   int lcount = fill_labeltrackers(fb, &root);
-  DEBUGPRINTD("Got labels", lcount)
+  DEBUGPRINTD_V("Got labels", lcount)
   if(lcount < 0){
     fprintf(stderr, "Error occured in getting label info\n");
     return 4;
@@ -485,6 +529,53 @@ int load_fileblock_labels(fileblock * fb){
 }
 
 
+/* List the labels contined in the given fileblock to stdout.
+ */
+void list_fileblock_labels(fileblock * fb){
+  if(fb == NULL) return;
+
+  printf("::: %u labels :::\n", fb->label_count);
+
+  for(unsigned int j = 0; j < fb->label_count; ++j){
+    label * lab = &fb->labels[j];
+    char labuf[LABEL_MAX_SIZE + 1];
+
+    memcpy(labuf, lab->text, (size_t)lab->length);
+    labuf[lab->length] = '\0';
+
+    printf("%3u: %s\n", j, labuf);
+  }
+}
+
+
+/* Output the text contained in the fileblock from the given label up to the
+ * next label. Will output the label line as well.
+ */
+void show_fileblock_section(fileblock * fb, unsigned int label){
+  if(fb == NULL) return;
+  if(label < 0 || label > fb->label_count) return;
+
+  long int startpos = fb->labels[label].fpos;
+  long int endpos;
+  long int total;
+
+  // TODO: Adjust for delimeter
+  if(label + 1 < fb->label_count)
+    endpos = fb->labels[label + 1].fpos;
+  else
+    endpos = fb->fsize;
+
+  total = endpos - startpos;
+
+  char buf[total];
+
+  // TODO: Add error handling
+  fseek(fb->fhandle, startpos, SEEK_SET);
+  fread(buf, sizeof(char), total, fb->fhandle);
+  fwrite(buf, sizeof(char), total, stdout);
+}
+
+
 /* Print out the size of the given file (or so).
  * Returns a negative value on error.
  * May be improved by using e.g. fstat
@@ -533,5 +624,89 @@ int dump_file_contents(FILE * f){
   printf(":::Contents End:::\n");
 
   return 0;
+}
+
+
+/* Test function to dump various infos for inspecting a fileblock.
+ */
+void test_dump_fileblock(fileblock * fb){
+  // Fileblock inited in main, but operation should be idempotent
+  if(init_fileblock(fb)){
+    printf("Error initializing fileblock\n");
+    return;
+  }
+
+  printf("Opened fileblock for: %s\n", fb->fname);
+  printf("Size: %ld\n", fb->fsize);
+
+  printf("Found %u labels:\n", fb->label_count);
+  for(int j = 0; j < fb->label_count; ++j){
+    printf("Label %2d: [%5ld] (%2u) ", j, fb->labels[j].fpos, fb->labels[j].length);
+    fwrite(fb->labels[j].text, sizeof(char), fb->labels[j].length, stdout);
+    printf("\n");
+  }
+
+  /*
+  if(fb->buf != NULL){
+    printf("Contents of buffer:\n");
+    fwrite(fb->buf, sizeof(char), fb->fsize, stdout);
+    printf("\n");
+  } else {
+    printf("Buffer not used\n");
+  }
+  */
+
+  // Fileblock closed in main, but operation should be idempotent
+  if(close_fileblock(fb)){
+    printf("Error closing fileblock\n");
+  } else {
+    printf("Closed fileblock for: %s\n", fb->fname);
+  }
+}
+
+
+/* Read user input from stdin and pull a number out.
+ * Will provide a brief initial prompt and will retry until success.
+ * Supports inputs of up to 9 digits.
+ *
+ * The min and max values are treated as inclusive.
+ *
+ * Returns 1 less than the given minimum on error. If you set min to -INT_MAX,
+ * well, just be aware.
+ */
+int get_user_number(int min, int max, int * fail_count){
+  int input;
+  unsigned int fails = 0;
+
+  printf("Enter a choice (%d - %d): ", min, max);
+
+  do {
+    if(fails) printf("Invalid input, please try again: ");
+
+    char buf[10];
+
+    clearerr(stdin);
+    if(fgets(buf, 10, stdin) == NULL){
+      if(ferror(stdin)) perror("Error reading input");
+      return min - 1;
+    }
+
+    if(buf[strlen(buf) - 1] != '\n'){
+      int c;
+      do c = fgetc(stdin);
+      while(c != EOF && c != '\n');
+    }
+
+    // Check for success
+    if(sscanf(buf, "%d", &input) == 1
+    && input >= min
+    && input <= max
+    ) break;
+
+    ++fails;
+  } while(1);
+
+  if(fail_count != NULL) *fail_count = fails;
+  return input;
 }
 
