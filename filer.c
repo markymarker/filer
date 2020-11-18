@@ -42,7 +42,6 @@ typedef struct {
   long int       fsize;       // File size
   unsigned int   label_count; // Number of labels in file
   char           operations;  // Indicator for actions performed
-//char           file_in_buf; // Boolean indicating if entire file is in buf
   char           no_use_buf;  // Boolean to prevent loading buf, if desired
   char         * buf;         // Buffer for file contents if within set limit
 } fileblock;
@@ -138,7 +137,7 @@ Which action to take?\n\
 
 
 /* Initializes a fileblock by inspecting the file to fill its fields.
- * The fileblock pass to this function should have a filename set in the fname field.
+ * The fileblock passed to this function should have a filename set in the fname field.
  */
 int init_fileblock(fileblock * fb){
   if(fb == NULL) return 1;
@@ -157,7 +156,6 @@ int init_fileblock(fileblock * fb){
   // fb->labels
   // fb->label_count
   // fb->operations
-  // fb->file_in_buf
   // fb->buf
 
   // Load new data into fileblock
@@ -171,14 +169,18 @@ int init_fileblock(fileblock * fb){
     return 3;
   }
 
-  load_fileblock_file_maybe(fb);
+  // Set initialized -- others will be set in e.g. load_fileblock_labels
+  fb->operations |= FB_INITIALIZED;
 
-  load_fileblock_labels(fb);
+  int rval;
+
+  if(rval = load_fileblock_file_maybe(fb))
+    fprintf(stderr, "Error occured loading fileblock (%d)\n", rval);
+
+  if(rval = load_fileblock_labels(fb))
+    fprintf(stderr, "Error occured loading labels (%d)\n", rval);
 
   // TODO
-
-  // Set to initialized only
-  fb->operations = FB_INITIALIZED;
 
   return 0;
 }
@@ -219,9 +221,6 @@ int close_fileblock(fileblock * fb){
   // Not strictly a part of closing the fileblock, but since we're clearing the
   // buffers, we will also set these to keep state consistent
   fb->label_count = 0;
-  //fb->file_in_buf = 0;
-
-  //memset(fb->buf, '\0', FB_MAX_BUF_SIZE);
 
   return 0;
 }
@@ -299,7 +298,7 @@ int load_fileblock_file_maybe(fileblock * fb){
 int fill_labeltrackers(fileblock * fb, labeltracknode * root){
   if(fb == NULL) return -1;
   if(root == NULL) return -1;
-  if(!(fb->operations | FB_INITIALIZED)) return -2;
+  if(!(fb->operations & FB_INITIALIZED)) return -2;
   // This function doesn't care if labels were already loaded,
   // as it does not modify the fileblock
 
@@ -345,7 +344,7 @@ int fill_labeltrackers(fileblock * fb, labeltracknode * root){
       read = fread(buf, sizeof(char), bufsize, f);
       if(ferror(f)){
         perror("Error reading file to get label count");
-        return 4;
+        return -4;
       }
     } else {
       read = fb->fsize;
@@ -435,9 +434,8 @@ void free_labeltrack_chain(labeltracknode * lt_current){
  * This function uses the buf in the fileblock if available.
  */
 int load_fileblock_labels(fileblock * fb){
-  //fprintf(stderr, "load labels under construction\n"); return -1;
   if(fb == NULL) return 1;
-  if(!(fb->operations | FB_INITIALIZED)) return 2;
+  if(!(fb->operations & FB_INITIALIZED)) return 2;
   if(fb->operations & FB_LOADED_LABELS) return 3;
 
   labeltracknode root = {0};
@@ -505,10 +503,15 @@ int load_fileblock_labels(fileblock * fb){
   // Step 3: Store label information in condensed format
 
   int ltxt_pos = 0;
+  int current_label = 0;
   lt_current = &root;
   while(lt_current != NULL){
-    for(int j = 0; j < lcount; ++j){
-      label * lab = &fb->labels[j];
+    int lc = lcount - current_label > LABELTRACK_SLOTS
+      ? LABELTRACK_SLOTS
+      : lcount - current_label
+    ;
+    for(int j = 0; j < lc; ++j){
+      label * lab = &fb->labels[current_label];
       lab->fpos = lt_current->positions[j];
       lab->length = lt_current->lengths[j];
 
@@ -517,6 +520,7 @@ int load_fileblock_labels(fileblock * fb){
       memcpy(tp, lt_current->label_texts + j * LABEL_MAX_SIZE, lab->length);
 
       ltxt_pos += lab->length;
+      ++current_label;
     }
 
     lt_current = lt_current->next;
